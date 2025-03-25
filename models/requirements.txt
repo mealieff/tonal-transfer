@@ -2,3 +2,6 @@ datasets==1.14
 transformers==4.11.3
 librosa
 huggingface_hub
+datasets
+torch >= 1.5.0
+jiwer
