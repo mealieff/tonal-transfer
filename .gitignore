@@ -1,5 +1,8 @@
 # external libraries / repos
 forced-alignment/
+aligned_lamkang/
+FAVE/
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
