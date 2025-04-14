@@ -1,3 +1,6 @@
+# external libraries / repos
+forced-alignment/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
