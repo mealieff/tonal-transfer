@@ -1,0 +1,35 @@
+# pyproject.toml
+
+[build-system]
+requires      = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# also requires set-up instructions delineated in README
+
+[project]
+name = "parse_EAF"
+version = "0.0.1"
+description = "A library to help parse EAF and Timegrid files"
+readme = "README.md"
+authors = [{ name = "Melissa Lieffers", email = "mealieff@iu.edu" }]
+license = { file = "COPYING" }
+classifiers = [
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+]
+keywords = ["STT", "transcription", "tone"]
+dependencies = [
+]
+requires-python = ">=3.7"
+
+
+[project.optional-dependencies]
+dev = ["bumpver", "pip-tools"]
+
+
+[project.urls]
+Homepage = https://github.com/mealieff/tonal-transfer/blob/main/models/train.py
+
+
+

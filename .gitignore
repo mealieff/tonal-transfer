@@ -2,7 +2,9 @@
 forced-alignment/
 aligned_lamkang/
 FAVE/
-
+ToneLab/
+models/
+lamkang_data/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

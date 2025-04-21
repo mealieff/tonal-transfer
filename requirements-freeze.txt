@@ -1,0 +1,14 @@
+certifi==2024.2.2
+charset-normalizer==3.3.2
+fave==2.0.2
+numpy==1.26.4
+omegaconf==2.0.6
+pandas==2.2.1
+praat-parselmouth==0.4.5
+pympi-ling==1.70.2
+soundfile==0.12.1
+torch==2.1.0+cu121
+torchaudio==2.1.0
+torchvision==0.16.0+cu121
+transformers==4.46.3
+triton==2.1.0
