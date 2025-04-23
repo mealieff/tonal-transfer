@@ -45,6 +45,7 @@ def ensure_model_downloaded():
 # === this generates a README for the model, not touching unless sending to huggingface ===
 def prepare_readme():
     readme_text = """
+"""
 language: ["lamkang", "unspecified"]
 tags:
 - audio
@@ -57,18 +58,18 @@ tags:
 """
 # XLS-R Model for Lamkang STT (Base)
 
+"""
 This repository contains a version of the [`facebook/wav2vec2-large-xlsr-53`] model prepared for Lamkang transcription. All data from CoRSAL. 
 """
-    readme_file = LOCAL_MODEL_DIR / "README.md"
-    readme_file.write_text(readme_text)
-    print("README.md written.")
+#    readme_file = LOCAL_MODEL_DIR / "README.md"
+#    readme_file.write_text(readme_text)
+#    print("README.md written.")
 """
-
+"""
 # === for running ===
-"""
 
 if __name__ == "__main__":
     create_vocab()
     ensure_model_downloaded()
-    prepare_readme()
+#    prepare_readme()
 

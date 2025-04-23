@@ -3,9 +3,12 @@ import torchaudio
 import soundfile as sf
 from transformers import Wav2Vec2Processor, Wav2Vec2ForCTC
 import torch
-from praatio import tgio
+from praatio import textgrid
 from pathlib import Path
 import sys
+import importlib
+from tonelab import tonelab.tone2vec
+importlib.reload(tonelab.tone2vec)
 from tonelab.tone2vec import loading, parse_phonemes, tone_feats, plot
 
 def transcribe_audio_segment(segment_audio, sample_rate, model, device):
@@ -34,7 +37,7 @@ def process_files(audio_dir, align_dir, model_name="facebook/wav2vec2-large-xlsr
         waveform, sr = torchaudio.load(wav_file)
         waveform = waveform.squeeze()
 
-        tg = tgio.openTextgrid(textgrid_file, includeEmptyIntervals=False)
+        tg = textgrid.openTextgrid(textgrid_file, includeEmptyIntervals=False)
         tier_names = tg.tierNameList
         text_tier_name = tier_names[0]
 
