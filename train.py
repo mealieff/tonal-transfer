@@ -1,24 +1,71 @@
-## https://github.com/YiYang-github/ToneLab/blob/main/usage.ipynb This script implements this usage guide by ToneLab
 import argparse
 import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from sklearn.cluster import KMeans
+from torch.utils.data import TensorDataset, DataLoader
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+from sklearn.cluster import KMeans
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
-from sklearn.metrics import accuracy_score
-from jiwer import cer, wer
 import matplotlib.pyplot as plt
-from sklearn.decomposition import PCA
-import umap
-import importlib
+from tqdm import tqdm
+from jiwer import cer, wer
 import tonelab.tone2vec
+import importlib
 importlib.reload(tonelab.tone2vec)
 from tonelab.tone2vec import loading, parse_phonemes, tone_feats, plot
 from tonelab.model import VGG, ResNet, DenseNet, mlp
+import json
+from parse_eaf.parse_eaf import process_eaf_data, create_vocab
+
+def load_data(audio_dir, align_dir):
+    dataset_path = audio_dir  
+    info_path = align_dir    
+
+    dataset = loading(dataset_path)
+    labels = loading(info_path, column_name='areas')
+
+    _, _, _, tone_list = parse_phonemes(dataset)
+    feats = tone_feats(tone_list)
+
+    X = torch.tensor(feats, dtype=torch.float32)
+    y = torch.tensor(labels.values, dtype=torch.float32)
+
+    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    train_dataset = TensorDataset(X_train, y_train)
+    val_dataset = TensorDataset(X_val, y_val)
+
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+    valid_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
+
+    unique_transcription = X.unique(dim=0)  
+
+    return train_loader, valid_loader, unique_transcription
+
+def preprocess_data(data_dir, output_dir):
+    os.makedirs(output_dir, exist_ok=True)
+    dataset = [f for f in os.listdir(data_dir) if f.endswith(".txt")]
+    eaf_files = [f for f in os.listdir(data_dir) if f.endswith(".eaf")]
+
+    train_data = []
+    for eaf_file in eaf_files:
+        wav_file = eaf_file.replace(".eaf", ".wav")
+        wav_path = os.path.join(data_dir, "audio", wav_file)
+        eaf_path = os.path.join(data_dir, eaf_file)
+        if os.path.exists(wav_path):
+            train_data.extend(process_eaf_data(eaf_path, wav_path))
+
+    with open(os.path.join(output_dir, "train_segments.jsonl"), "w", encoding="utf-8") as f:
+        for fn in dataset:
+            text = open(os.path.join(data_dir, fn)).read()
+            f.write(json.dumps({"text": text}, ensure_ascii=False) + "\n")
+
+    vocab = create_vocab(text)
+    with open(os.path.join(output_dir, "vocab.json"), "w", encoding="utf-8") as f:
+        json.dump(vocab, f, ensure_ascii=False, indent=2)
 
 
 def train_and_evaluate(model, train_loader, valid_loader, optimizer, device, num_epochs, save_dir, unique_transcription, print_interval):
@@ -123,226 +170,88 @@ def eval_metric(values, batch_y, unique_transcription, metric_type='acc'):
     elif metric_type == 'mae':
         return total_loss
 
-def match_transcription(value, unique_transcription):
-    """
-    Match the predicted output to the closest valid transcription.
+class mlp(nn.Module):
+    def __init__(self, input_size, hidden_sizes):
+        super().__init__()
+        layers = []
+        last_size = input_size
+        for size in hidden_sizes:
+            layers.append(nn.Linear(last_size, size))
+            layers.append(nn.ReLU())
+            last_size = size
+        self.network = nn.Sequential(*layers)
 
-    Args:
-    - value: torch.Tensor, the predicted vector
-    - unique_transcription: torch.Tensor, list of possible valid vectors
-
-    Returns:
-    - closest vector from unique_transcription
-    """
-    # Compute L2 distance to every unique transcription
-    distances = torch.norm(unique_transcription - value, dim=1)
-    closest_idx = torch.argmin(distances)
-    return unique_transcription[closest_idx]
-
-def compute_cer_wer(reference, hypothesis):
-    cer_score = cer(reference, hypothesis)
-    wer_score = wer(reference, hypothesis)
-    return cer_score, wer_score
-
-def perform_kmeans_clustering(embeddings, n_clusters=3):
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-    kmeans.fit(embeddings)
-    plt.scatter(embeddings[:, 0], embeddings[:, 1], c=kmeans.labels_)
-    plt.title('K-Means Clustering of Tone Embeddings')
-    plt.show()
-
-def process_files(audio_dir, align_dir, model_name="facebook/wav2vec2-large-xlsr-53"):
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = Tone2Vec(device=device)
-
-    audio_dir = Path(audio_dir)
-    align_dir = Path(align_dir)
-
-    all_embeddings = []
-    all_transcripts = []
-
-    for wav_file in audio_dir.glob("*.wav"):
-        base_name = wav_file.stem
-        textgrid_file = align_dir / f"{base_name}.TextGrid"
-
-        if not textgrid_file.exists():
-            print(f"Skipping {base_name} (no alignment file found)")
-            continue
-
-        waveform, sr = torchaudio.load(wav_file)
-        waveform = waveform.squeeze()
-
-        tg = textgrid.openTextgrid(textgrid_file, includeEmptyIntervals=False)
-        tier_names = tg.tierNameList
-        text_tier_name = tier_names[0]
-        segment_tier = tg.tierDict[text_tier_name]
-        intervals = segment_tier.entryList
-
-        for idx, (start, end, label) in enumerate(intervals):
-            if not label.strip():
-                continue
-
-            start_frame = int(start * sr)
-            end_frame = int(end * sr)
-            segment = waveform[start_frame:end_frame]
-
-            if len(segment) == 0:
-                continue
-
-            transcription, tone_embedding = transcribe_audio_segment_with_superscripts(segment.numpy(), sr, model, device)
-
-            all_embeddings.append(tone_embedding)
-            all_transcripts.append(transcription)
-
-    all_embeddings = np.vstack(all_embeddings)
-    X_train, X_test, y_train, y_test = train_test_split(all_embeddings, all_transcripts, test_size=0.2, random_state=42)
-
-    model.fit(X_train, y_train)
-    torch.save(model.state_dict(), "models/tonelab_model.pt")
-
-    y_pred = model.predict(X_test)
-    cer_score, wer_score = compute_cer_wer(y_test, y_pred)
-    print(f"CER: {cer_score}, WER: {wer_score}")
-
-    perform_kmeans_clustering(all_embeddings)
-
-def transcribe_audio_segment_with_superscripts(segment_audio, sample_rate, model, device):
-    tone_representation = model.encode(segment_audio)
-    transcription = model.decode(tone_representation)
-    
-    transcription_with_superscripts = transcription.replace("syllable", "syllable\u00B2") # check to see if this is the correct superscript handling
-    return transcription_with_superscripts, tone_representation
-
-def decode_transcription(tensor, idx2char):
-    """
-    Convert a tensor of indices into a readable string transcription.
-
-    Args:
-    - tensor: torch.Tensor of shape (seq_len,) or (batch, seq_len)
-    - idx2char: dict mapping index to character/phoneme
-
-    Returns:
-    - string transcription
-    """
-    if tensor.dim() > 1:
-        tensor = tensor.squeeze(0)  # remove batch dim if needed
-
-    chars = [idx2char[idx.item()] for idx in tensor if idx.item() in idx2char]
-    return ''.join(chars)
-
-def plot_pca(features, labels):
-    pca = PCA(n_components=2)
-    reduced = pca.fit_transform(features)
-    
-    plt.figure(figsize=(8, 6))
-    for label in np.unique(labels):
-        idx = labels == label
-        plt.scatter(reduced[idx, 0], reduced[idx, 1], label=label, alpha=0.5)
-    
-    plt.legend()
-    plt.title('PCA of Tone Features')
-    plt.xlabel('PC1')
-    plt.ylabel('PC2')
-    plt.grid(True)
-    plt.show()
-
-def plot_tone_clusters(features, labels=None, method='PCA', n_neighbors=15, min_dist=0.1, title='Tone Clusters', save_path=None):
-    """
-    Visualize tone embeddings in 2D using PCA or UMAP.
-
-    Args:
-    - features: np.array or torch.Tensor, shape (n_samples, n_features)
-    - labels: Optional list or array of labels for coloring
-    - method: 'PCA' or 'UMAP'
-    - n_neighbors: UMAP param (ignored for PCA)
-    - min_dist: UMAP param (ignored for PCA)
-    """
-
-    if isinstance(features, torch.Tensor):
-        features = features.cpu().numpy()
-
-    if method == 'UMAP':
-        reducer = umap.UMAP(n_neighbors=n_neighbors, min_dist=min_dist, random_state=42)
-        proj = reducer.fit_transform(features)
-    elif method == 'PCA':
-        reducer = PCA(n_components=2)
-        proj = reducer.fit_transform(features)
-    else:
-        raise ValueError("method must be 'PCA' or 'UMAP'")
-
-    plt.figure(figsize=(8,6))
-    scatter = plt.scatter(proj[:,0], proj[:,1], c=labels, cmap='Spectral', s=20, alpha=0.8)
-
-    if labels is not None:
-        plt.colorbar(scatter, label='Labels')
-
-    plt.title(title)
-    plt.xlabel('Component 1')
-    plt.ylabel('Component 2')
-    plt.grid(True)
-    
-    if save_path:
-        plt.savefig(save_path)
-        print(f"Saved cluster plot to {save_path}")
-    plt.show()
+    def forward(self, x):
+        return self.network(x)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Run Tone2Vec processing and evaluation on Lamkang data.")
+    parser.add_argument("--do_preprocess", action="store_true", help="Run preprocessing before training.")
     parser.add_argument('--audio_dir', type=str, default='/lamkang_data/Lamkang_aligned_audio_and_transcripts', help='Directory with .wav files')
-    parser.add_argument('--align_dir', type=str, default='/lamkang_data/Lamkang_aligned_audio_and_transcripts', help='Directory with .TextGrid alignment files')
-    parser.add_argument('--model_weights', type=str, default='tonelab/weights/tone2vec.npy', help='Path to pretrained tone2vec weights (.npy)')
+    parser.add_argument('--align_dir', type=str, default='/lamkang_data/Lamkang_aligned_audio_and_transcript/Forced_Aligned', help='Directory with .TextGrid alignment files')
     parser.add_argument('--save_model', type=str, default='models/tonelab_model.pt', help='Where to save the trained model')
     parser.add_argument('--do_train', action='store_true', help='If set, will train a classifier on extracted embeddings')
     parser.add_argument('--do_eval', action='store_true', help='If set, will evaluate WER and CER')
     parser.add_argument('--do_cluster', action='store_true', help='If set, will visualize tone clusters using KMeans')
+    parser.add_argument('--num_epochs', type=int, default=20, help='Number of training epochs')
+    parser.add_argument('--print_interval', type=int, default=5, help='How often to print training results')
+    parser.add_argument("--output_dir", type=str, default="~/output", help='tricky bc actually output of preprocessing, also known as input')
 
     args = parser.parse_args()
+    if args.do_preprocess:
+        preprocess_data(args.align_dir, args.output_dir)
 
-    if not os.path.exists(args.model_weights):
-        raise FileNotFoundError(f"Tone2Vec weights not found at {args.model_weights}")
 
-    print("Loading pretrained tone2vec weights...")
-    tone2vec_weights = np.load(args.model_weights)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    print(f"Processing files in {args.audio_dir}...")
-    embeddings, transcripts = process_files(
-        audio_dir=args.audio_dir,
-        align_dir=args.align_dir,
-        model_name="facebook/wav2vec2-large-xlsr-53"
-    )
+    models = {
+        'VGG': VGG(),
+        'ResNet': ResNet(),
+        'DenseNet': DenseNet(),
+        'MLP': mlp(input_size=128, hidden_sizes=[64, 32]),
+         }
 
-    if args.do_train:
-        from sklearn.model_selection import train_test_split
-        from sklearn.linear_model import LogisticRegression
+    best_accuracy = 0
+    best_model_name = ''
+    results = {}
 
-        print("Training simple classifier...")
-        X_train, X_test, y_train, y_test = train_test_split(
-            embeddings, transcripts, test_size=0.2, random_state=42
-        )
+    train_loader, valid_loader, unique_transcription = load_data(args.audio_dir, args.align_dir)
 
-        clf = LogisticRegression(max_iter=1000)
-        clf.fit(X_train, y_train)
-        torch.save(clf, args.save_model)
-        print(f"Model saved to {args.save_model}")
+    for model_name, model in models.items():
+        optimizer = optim.Adam(model.parameters(), lr=0.001)
+        accuracy = train_and_evaluate(model, train_loader, valid_loader, optimizer, device, args.num_epochs, args.save_model, unique_transcription, args.print_interval)
+        results[model_name] = accuracy
+        print(f"Model: {model_name}, Accuracy: {accuracy}")
 
-        if args.do_eval:
-            print("Evaluating on test set...")
-            y_pred = clf.predict(X_test)
-            cer_score, wer_score = compute_cer_wer(y_test, y_pred)
-            print(f"CER: {cer_score:.4f}, WER: {wer_score:.4f}")
+        if accuracy > best_accuracy:
+            best_accuracy = accuracy
+            best_model_name = model_name
+
+    print(f"Best Model: {best_model_name} with Accuracy: {best_accuracy}")
 
     if args.do_cluster:
-        print("Performing KMeans clustering on embeddings...")
+        # Perform clustering visualization
+        print("Performing KMeans clustering...")
+        embeddings, labels = extract_embeddings_for_clustering(train_loader)
         perform_kmeans_clustering(embeddings)
+
+    if args.do_eval:
+        # Perform evaluation (WER, CER, etc.)
+        print("Evaluating performance...")
+        # Add evaluation logic here as needed
 
 if __name__ == '__main__':
     main()
 
 """
 Example usage:
-python3 -m tonelab --do_cluster
-python3 -m tonelab --do_train --do_eval
+first time: 
+python3  --do_preprocess  --do_cluster
+
+python3 --do_cluster
+python3 --do_train --do_eval
+
 
 """
 
