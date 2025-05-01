@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
+from torch.optim.lr_scheduler import CosineAnnealingLR
+from Levenshtein import distance as levenshtein_distance
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 from sklearn.cluster import KMeans
@@ -17,8 +19,14 @@ import importlib
 importlib.reload(tonelab.tone2vec)
 from tonelab.tone2vec import loading, parse_phonemes, tone_feats, plot
 from tonelab.model import VGG, ResNet, DenseNet, mlp
+from tonelab.clustering import auto_cluster_feat, auto_cluster_plot
 import json
 from parse_eaf.parse_eaf import process_eaf_data, create_vocab
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+import umap
+from sklearn.preprocessing import normalize
+
 
 def load_data(audio_dir, align_dir):
     dataset_path = audio_dir  
@@ -184,6 +192,56 @@ class mlp(nn.Module):
     def forward(self, x):
         return self.network(x)
 
+def match_transcription(feat, unique_transcription):
+    diff = torch.abs(unique_transcription - feat)
+    min_index = torch.argmin(diff.sum(dim=1))
+    return unique_transcription[min_index]
+
+def extract_embeddings_for_clustering(model, data_loader, device, unique_transcription):
+    model.eval()
+    embeddings = []
+    labels = []
+
+    with torch.no_grad():
+        for batch_X, batch_y in data_loader:
+            batch_X = batch_X.to(device)
+            outputs = model(batch_X)
+            for i in range(outputs.size(0)):
+                pred = match_transcription(outputs[i].cpu(), unique_transcription)
+                labels.append(pred.cpu().numpy())
+            embeddings.append(outputs.cpu().numpy())
+
+    embeddings = np.concatenate(embeddings, axis=0)
+    labels = np.stack(labels)
+    return normalize(embeddings), labels
+
+def reduce_dimensionality(embeddings, method='umap', dim=2):
+    if method == 'pca':
+        reducer = PCA(n_components=dim)
+    elif method == 'tsne':
+        reducer = TSNE(n_components=dim)
+    elif method == 'umap':
+        reducer = umap.UMAP(n_components=dim)
+    else:
+        raise ValueError(f"Unsupported method: {method}")
+    return reducer.fit_transform(embeddings)
+
+def perform_kmeans_clustering(embeddings, labels, n_clusters=5):
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+    cluster_labels = kmeans.fit_predict(embeddings)
+
+    reduced = reduce_dimensionality(embeddings, method='umap', dim=2)
+
+    plt.figure(figsize=(8, 8))
+    for cluster_id in np.unique(cluster_labels):
+        idx = np.where(cluster_labels == cluster_id)
+        plt.scatter(reduced[idx, 0], reduced[idx, 1], label=f"Cluster {cluster_id}", s=80)
+
+    plt.title("KMeans Clustering of Embeddings (Reduced to 2D)")
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
 
 def main():
     parser = argparse.ArgumentParser(description="Run Tone2Vec processing and evaluation on Lamkang data.")
@@ -202,7 +260,16 @@ def main():
     if args.do_preprocess:
         preprocess_data(args.align_dir, args.output_dir)
 
+    if args.do_cluster:
+        print("Performing KMeans clustering...")
 
+        # Load best model
+        best_model = models[best_model_name]
+        best_model.load_state_dict(torch.load(os.path.join(args.save_model, 'best_model.pth'), map_location=device))
+        best_model.to(device)
+
+        embeddings, labels = extract_embeddings_for_clustering(best_model, train_loader, device, unique_transcription)
+        perform_kmeans_clustering(embeddings, labels)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     models = {
