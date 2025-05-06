@@ -264,6 +264,11 @@ def levenshtein_distance(s1, s2):
 
     return previous_row[-1]
 
+def accuracy(predictions, labels):
+    """Calculate accuracy based on correct predictions."""
+    _, predicted = torch.max(predictions, dim=1) 
+    correct = (predicted == labels).sum().item()  
+    return correct / len(labels)
 
 def main():
     parser = argparse.ArgumentParser(description="Run Tone2Vec processing and evaluation on Lamkang data.")
@@ -279,27 +284,13 @@ def main():
     parser.add_argument("--output_dir", type=str, default="~/output", help='tricky bc actually output of preprocessing, also known as input')
 
     args = parser.parse_args()
-    if args.do_preprocess:
-        preprocess_data(args.align_dir, args.output_dir)
-
-    if args.do_cluster:
-        print("Performing KMeans clustering...")
-
-        # Load best model
-        best_model = models[best_model_name]
-        best_model.load_state_dict(torch.load(os.path.join(args.save_model, 'best_model.pth'), map_location=device))
-        best_model.to(device)
-
-        embeddings, labels = extract_embeddings_for_clustering(best_model, train_loader, device, unique_transcription)
-        perform_kmeans_clustering(embeddings, labels)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+    
     models = {
         'VGG': VGG(),
         'ResNet': ResNet(),
         'DenseNet': DenseNet(),
         'MLP': mlp(input_size=128, hidden_sizes=[64, 32]),
-         }
+    }
 
     best_accuracy = 0
     best_model_name = ''
@@ -307,8 +298,15 @@ def main():
 
     train_loader, valid_loader, unique_transcription = load_data(args.audio_dir, args.align_dir)
 
+    if args.do_preprocess:
+        preprocess_data(args.align_dir, args.output_dir)
+
     for model_name, model in models.items():
         optimizer = optim.Adam(model.parameters(), lr=0.001)
+        cer_score, wer_score = train_and_evaluate(model, train_loader, valid_loader, optimizer, device, args.num_epochs, args.save_model, unique_transcription, args.print_interval)
+        results[model_name] = {'CER': cer_score, 'WER': wer_score}
+        print(f"Model: {model_name}, CER: {cer_score:.4f}, WER: {wer_score:.4f}")
+
         accuracy = train_and_evaluate(model, train_loader, valid_loader, optimizer, device, args.num_epochs, args.save_model, unique_transcription, args.print_interval)
         results[model_name] = accuracy
         print(f"Model: {model_name}, Accuracy: {accuracy}")
@@ -320,15 +318,18 @@ def main():
     print(f"Best Model: {best_model_name} with Accuracy: {best_accuracy}")
 
     if args.do_cluster:
-        # Perform clustering visualization
         print("Performing KMeans clustering...")
-        embeddings, labels = extract_embeddings_for_clustering(train_loader)
-        perform_kmeans_clustering(embeddings)
+        best_model = models[best_model_name]
+        best_model.load_state_dict(torch.load(os.path.join(args.save_model, 'best_model.pth'), map_location=device))
+        best_model.to(device)
+
+        embeddings, labels = extract_embeddings_for_clustering(best_model, train_loader, device, unique_transcription)
+        perform_kmeans_clustering(embeddings, labels)
 
     if args.do_eval:
-        # Perform evaluation (WER, CER, etc.)
         print("Evaluating performance...")
-        # Add evaluation logic here as needed
+        cer_score, wer_score = evaluate_model(best_model, valid_loader, device, unique_transcription)
+        print(f"Final Evaluation - CER: {cer_score:.4f}, WER: {wer_score:.4f}")
 
 if __name__ == '__main__':
     main()
