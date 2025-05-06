@@ -10,8 +10,8 @@ audio_folder = "lamkang_data/Lamkang_aligned_audio_and_transcripts"
 
 VOWELS = {"a", "e", "i", "o", "u", "ɪ", "ʊ", "ɛ", "ʌ", "æ", "ɑ", "ɔ", "ə"}
 
-def is_vowel(label):
-    return any(v in label.lower() for v in VOWELS)
+def is_vowel(text):
+    return any(v in text.lower() for v in VOWELS)
 
 def extract_f0(y, sr, point_time):
     idx = int(point_time * sr)
@@ -26,15 +26,20 @@ def extract_mfcc(y, sr, start_time, end_time):
     mfcc = librosa.feature.mfcc(y=y_word, sr=sr, n_mfcc=13, n_fft=n_fft)
     return mfcc.mean(axis=1)
 
-def get_vowel_bounds(word_start, word_end, phoneme_intervals):
+def get_vowel_bounds(word_start, word_end, phoneme_tier):
     vowels = [
-        (intv.start, intv.end)  # Use start and end for start and end times of vowels
-        for intv in phoneme_intervals
-        if is_vowel(intv.label) and intv.start >= word_start and intv.end <= word_end
+        intv for intv in phoneme_tier
+        if is_vowel(intv.text) and intv.start_time >= word_start and intv.end_time <= word_end
     ]
-    if not vowels:
-        return None, None
-    return vowels[0], vowels[-1]
+
+    if vowels:
+        first_vowel = vowels[0]
+        last_vowel = vowels[-1]
+        start_5 = first_vowel.start_time + 0.05 * (first_vowel.end_time - first_vowel.start_time)
+        end_5 = last_vowel.start_time + 0.05 * (last_vowel.end_time - last_vowel.start_time)
+        return first_vowel, last_vowel
+    return None, None
+
 
 def process_textgrid(textgrid_folder, audio_folder):
     output_data = []
@@ -52,19 +57,19 @@ def process_textgrid(textgrid_folder, audio_folder):
             print(f"Error opening TextGrid: {e}")
             continue
 
-        words_tier = tg.get_tier_by_name("Word")  
-        phoneme_tier = tg.get_tier_by_name("Letter")  
+        words_tier = tg.get_tier_by_name("Word")  # Access the 'Word' tier
+        phoneme_tier = tg.get_tier_by_name("Letter")  # Access the 'Letter' tier
 
         y, sr = librosa.load(audio_path)
 
         for word_interval in words_tier:
-            print(f"Word Interval: {word_interval}")  # Debug
+            print(f"Word Interval: {word_interval}")  # Debugging line to inspect the structure
             word = word_interval.text.strip()
             try:
-                start_time = word_interval.start  # Ojo
-                end_time = word_interval.end  # Using end for the end time but not working
+                start_time = word_interval.start_time  # Access start_time
+                end_time = word_interval.end_time  # Access end_time
             except AttributeError:
-                print(f"Error: Interval does not have 'start' or 'end' attribute in {file}")
+                print(f"Error: Interval does not have 'start_time' or 'end_time' attribute in {file}")
                 continue
 
             duration = end_time - start_time
@@ -79,27 +84,27 @@ def process_textgrid(textgrid_folder, audio_folder):
                 first_vowel, last_vowel = get_vowel_bounds(start_time, end_time, phoneme_tier)
 
                 if first_vowel:
-                    start_5 = first_vowel[0] + 0.05 * (first_vowel[1] - first_vowel[0])
+                    start_5 = first_vowel.start_time + 0.05 * (first_vowel.end_time - first_vowel.start_time)
                     initial_f0 = extract_f0(y, sr, start_5)
 
                 if last_vowel:
-                    end_95 = last_vowel[0] + 0.95 * (last_vowel[1] - last_vowel[0])
+                    end_95 = last_vowel.start_time + 0.95 * (last_vowel.end_time - last_vowel.start_time)
                     final_f0 = extract_f0(y, sr, end_95)
 
             mid_f0 = extract_f0(y, sr, mid_time)
-
             word_data = {
                 "word": word,
-                "timestamp": {"start": start_time, "end": end_time},
-                "initial_f0": initial_f0,
-                "final_f0": final_f0,
-                "mid_f0": mid_f0,
-                "duration": duration,
-                "MFCC_features": mfcc_features.tolist()
-            }
+                "timestamp": {"start": float(start_time), "end": float(end_time)},
+                "initial_f0": float(initial_f0),
+                "final_f0": float(final_f0),
+                "mid_f0": float(mid_f0),
+                "duration": float(duration),
+                "MFCC_features": [float(x) for x in mfcc_features.tolist()]
+                }
             output_data.append(word_data)
 
     return output_data
+
 
 def save_to_json(data, out_path):
     with open(out_path, "w") as f:
