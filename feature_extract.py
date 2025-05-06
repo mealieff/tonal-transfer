@@ -48,7 +48,11 @@ def process_textgrid(textgrid_folder, audio_folder):
         audio_path = os.path.join(audio_folder, file.replace(".TextGrid", ".wav"))
 
         tg = textgrid.openTextgrid(tg_path, includeEmptyIntervals=True)
-
+        for tier_name in tg.tierNames:
+            tier = tg._tierDict[tier_name]
+            for entry in tier.entries:
+                if entry.start == 0.0 and entry.end == 0.0:
+                    print(f"Empty interval in tier '{tier_name}' of file {file}")
         words_tier = tg._tierDict["Word"]  # Access the 'Word' tier
         phoneme_tier = tg._tierDict["Letter"]  # Access the 'Letter' tier
 
