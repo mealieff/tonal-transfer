@@ -46,6 +46,13 @@ def plot_clusters(vectors, labels, words):
     print("Saved plot to tone_clusters.png")
 
 def plot_chao_tones(vectors, labels):
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    def chao_scale(f0_values):
+        """Maps log2(f0) to Chao 1–5 scale."""
+        return np.interp(np.log2(f0_values), [5.0, 9.0], [1, 5])
+
     n_clusters = np.max(labels) + 1
     for cluster_id in range(n_clusters):
         cluster_vectors = vectors[labels == cluster_id]
@@ -61,9 +68,11 @@ def plot_chao_tones(vectors, labels):
         plt.ylabel("Tone Height (Chao Scale)")
         plt.grid(True)
         plt.tight_layout()
-        #plt.show()
-        plt.savefig("tone_clusters_chao.png")
-        print("Saved plot to tone_clusters_chao.png")
+
+        filename = f"tone_clusters_chao_{cluster_id}.png"
+        plt.savefig(filename)
+        plt.close()
+        print(f"Saved plot to {filename}")
 
 def main(json_path, n_clusters=4):
     data = load_json(json_path)
