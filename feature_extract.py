@@ -2,8 +2,12 @@ import os
 import json
 import librosa
 import numpy as np
-from praatio import textgrid
 import re
+from praatio import textgrid
+from praatio.utilities import errors as praat_errors
+from praatio.data_classes.point_tier import PointTier
+from praatio.data_classes.interval_tier import IntervalTier
+
 
 textgrid_folder = "lamkang_data/Lamkang_aligned_audio_and_transcripts/Forced_Aligned"
 audio_folder = "lamkang_data/Lamkang_aligned_audio_and_transcripts"
@@ -48,13 +52,9 @@ def process_textgrid(textgrid_folder, audio_folder):
         audio_path = os.path.join(audio_folder, file.replace(".TextGrid", ".wav"))
 
         tg = textgrid.openTextgrid(tg_path, includeEmptyIntervals=True)
-        for tier_name in tg.tierNames:
-            tier = tg._tierDict[tier_name]
-            for entry in tier.entries:
-                if entry.start == 0.0 and entry.end == 0.0:
-                    print(f"Empty interval in tier '{tier_name}' of file {file}")
-        words_tier = tg._tierDict["Word"]  # Access the 'Word' tier
-        phoneme_tier = tg._tierDict["Letter"]  # Access the 'Letter' tier
+        
+        words_tier = tg._tierDict["Word"]
+        phoneme_tier = tg._tierDict["Letter"]
 
         y, sr = librosa.load(audio_path)
 
@@ -63,7 +63,9 @@ def process_textgrid(textgrid_folder, audio_folder):
             start_time = word_interval.start  # Use start for the start time
             end_time = word_interval.end  # Use end for the end time
             duration = end_time - start_time
+            
             if duration == 0:
+                print(f"Skipping zero duration interval for word: '{word}' in file {file}")
                 continue
 
             mfcc_features = extract_mfcc(y, sr, start_time, end_time)
@@ -95,6 +97,7 @@ def process_textgrid(textgrid_folder, audio_folder):
             output_data.append(word_data)
 
     return output_data
+
 
 def save_to_json(data, out_path):
     with open(out_path, "w") as f:
