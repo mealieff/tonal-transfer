@@ -4,6 +4,7 @@ import librosa
 import numpy as np
 import tgt
 import re
+from scipy.stats import zscore
 
 textgrid_folder = "lamkang_data/Lamkang_aligned_audio_and_transcripts/Forced_Aligned"
 audio_folder = "lamkang_data/Lamkang_aligned_audio_and_transcripts"
@@ -111,6 +112,25 @@ def save_to_json(data, out_path):
         json.dump(data, f, indent=2)
 
 output = process_textgrid(textgrid_folder, audio_folder)
+
+### Normalization steps for F0 and MFCCs
+initial_f0s = np.array([entry["initial_f0"] for entry in output])
+mid_f0s = np.array([entry["mid_f0"] for entry in output])
+final_f0s = np.array([entry["final_f0"] for entry in output])
+initial_z = zscore(initial_f0s)
+mid_z = zscore(mid_f0s)
+final_z = zscore(final_f0s)
+
+mfcc_matrix = np.array([entry["MFCC_features"] for entry in output])  # Shape: (N, 13)
+mfcc_z = zscore(mfcc_matrix, axis=0)
+
+for i, entry in enumerate(output):
+    entry["initial_f0_z"] = float(initial_z[i])
+    entry["mid_f0_z"] = float(mid_z[i])
+    entry["final_f0_z"] = float(final_z[i])
+    entry["MFCC_features_z"] = [float(x) for x in mfcc_z[i].tolist()]
+
 save_to_json(output, "lamkang_word_features.json")
 print("Saved to lamkang_word_features.json")
+
 
