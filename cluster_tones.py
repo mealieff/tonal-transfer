@@ -17,31 +17,43 @@ def chao_scale(f0s):
     scaled = 1 + 4 * (f0s_log - min_log) / (max_log - min_log)
     return np.round(scaled).astype(int)
 
-def normalize_zscore(vectors):
+def normalize_f0(vectors):
     vectors = np.array(vectors)
-    if np.std(vectors) == 0:
-        return np.zeros_like(vectors)
-    return (vectors - np.mean(vectors)) / np.std(vectors)
+    valid = np.all(vectors != 0, axis=1)
+    valid_vectors = vectors[valid]
+    # debugging
+    if len(valid_vectors) == 0:
+        print("Warning: No valid F0 vectors to normalize.")
+        return vectors
+
+    mean = np.mean(valid_vectors)
+    std = np.std(valid_vectors)
+
+    if std == 0:
+        print("Warning: Zero standard deviation in F0 normalization.")
+        return vectors
+
+    normalized = (vectors - mean) / std
+    return normalized
 
 def load_json(json_path):
     with open(json_path, "r") as f:
         data = json.load(f)
     return data
 
-def extract_tone_vectors(data):
+def extract_features(data):
     f0_vectors = []
-    words = []
     mfcc_vectors = []
+    words = []
     for item in data:
-        tone_vec = [item["initial_f0"], item["mid_f0"], item["final_f0"]]
-        if any(f == 0.0 for f in tone_vec):
+        if any(f == 0.0 for f in [item["initial_f0"], item["mid_f0"], item["final_f0"]]):
             continue
-        norm_f0 = normalize_zscore(tone_vec)
-        f0_vectors.append(norm_f0)
+        f0_vec = [item["initial_f0"], item["mid_f0"], item["final_f0"]]
+        mfcc_vec = item.get("mfcc", [])
+        f0_vectors.append(f0_vec)
+        mfcc_vectors.append(mfcc_vec)
         words.append(item["word"])
-        mfcc = item.get("mfcc", [])
-        mfcc_vectors.append(mfcc)
-    return np.array(f0_vectors), words, np.array(mfcc_vectors)
+    return np.array(f0_vectors), np.array(mfcc_vectors), words
 
 def plot_clusters(vectors, labels, title, filename):
     pca = PCA(n_components=2)
@@ -59,7 +71,7 @@ def plot_clusters(vectors, labels, title, filename):
     print(f"Saved plot to {filename}")
 
 
-def plot_chao_tones(f0_vectors, labels):
+def plot_chao_tones(f0_vectors, labels, prefix="tone_clusters_chao"):
     def chao_scale(f0_values):
         return np.interp(np.log2(f0_values), [5.0, 9.0], [1, 5])
     
@@ -85,43 +97,50 @@ def plot_chao_tones(f0_vectors, labels):
 
 def main(json_path, n_clusters=4):
     data = load_json(json_path)
-    f0_vectors, words, mfcc_vectors = extract_tone_vectors(data)
+    f0_vectors, mfcc_vectors, words = extract_features(data)
 
     if len(f0_vectors) < n_clusters:
         print("Not enough data for the requested number of clusters.")
         return
 
-    # F0-only clustering
+    # Normalize
+    f0_norm = normalize_zscore(f0_vectors)
+    mfcc_norm = normalize_zscore(mfcc_vectors)
+
+    # ----- F0-only clustering -----
     kmeans_f0 = KMeans(n_clusters=n_clusters, random_state=42, n_init='auto')
-    labels_f0 = kmeans_f0.fit_predict(f0_vectors)
-    sil_f0 = silhouette_score(f0_vectors, labels_f0)
-    print(f"[F0-only] Silhouette Score: {sil_f0:.3f}")
-    print(f"[F0-only] Cluster Counts: {np.bincount(labels_f0)}")
-    plot_clusters(f0_vectors, labels_f0, "F0-Only Clusters", "tone_clusters_f0.png")
-    plot_chao_tones(f0_vectors, labels_f0)
+    labels_f0 = kmeans_f0.fit_predict(f0_norm)
+    sil_f0 = silhouette_score(f0_norm, labels_f0)
+    print(f"[F0 Only] Silhouette Score: {sil_f0:.3f}")
+    print(f"[F0 Only] Cluster Counts: {np.bincount(labels_f0)}")
 
-    # Save output
-    for item, label in zip(data, labels_f0):
-        item["cluster_id_f0"] = int(label)
-    with open("lamkang_clustered_f0.json", "w") as f:
-        json.dump(data, f, indent=2)
-    print("Saved F0-only cluster results to lamkang_clustered_f0.json")
+    plot_clusters(f0_norm, labels_f0, "F0-Only Clustering", "tone_clusters_f0.png")
+    plot_chao_tones(f0_vectors, labels_f0, prefix="tone_clusters_chao_f0")
 
-    # F0 + MFCC clustering if MFCCs are non-empty
-    if mfcc_vectors.size > 0 and len(mfcc_vectors[0]) > 0:
-        combined = np.hstack([f0_vectors, mfcc_vectors])
-        kmeans_multi = KMeans(n_clusters=n_clusters, random_state=42, n_init='auto')
-        labels_multi = kmeans_multi.fit_predict(combined)
-        sil_multi = silhouette_score(combined, labels_multi)
-        print(f"[F0+MFCC] Silhouette Score: {sil_multi:.3f}")
-        print(f"[F0+MFCC] Cluster Counts: {np.bincount(labels_multi)}")
-        plot_clusters(combined, labels_multi, "F0 + MFCC Clusters", "tone_clusters_multivariate.png")
+    # ----- Multivariate (F0 + MFCC) clustering -----
+    combined = np.hstack((f0_norm, mfcc_norm))
+    kmeans_comb = KMeans(n_clusters=n_clusters, random_state=42, n_init='auto')
+    labels_comb = kmeans_comb.fit_predict(combined)
+    sil_comb = silhouette_score(combined, labels_comb)
+    print(f"[F0 + MFCC] Silhouette Score: {sil_comb:.3f}")
+    print(f"[F0 + MFCC] Cluster Counts: {np.bincount(labels_comb)}")
 
-        for item, label in zip(data, labels_multi):
-            item["cluster_id_multivariate"] = int(label)
-        with open("lamkang_clustered_multivariate.json", "w") as f:
-            json.dump(data, f, indent=2)
-        print("Saved multivariate cluster results to lamkang_clustered_multivariate.json")
+    plot_clusters(combined, labels_comb, "F0 + MFCC Clustering", "tone_clusters_multivariate.png")
+    plot_chao_tones(f0_vectors, labels_comb, prefix="tone_clusters_chao_comb")
+
+    # Save output with both cluster labels
+    output = []
+    for i, item in enumerate(data):
+        if i >= len(labels_f0):
+            continue
+        if all(f > 0 for f in [item["initial_f0"], item["mid_f0"], item["final_f0"]]):
+            item["f0_cluster"] = int(labels_f0[i])
+            item["f0_mfcc_cluster"] = int(labels_comb[i])
+            output.append(item)
+
+    with open("lamkang_clustered.json", "w") as f:
+        json.dump(output, f, indent=2)
+    print("Cluster assignments saved to lamkang_clustered.json")
 
 if __name__ == "__main__":
     main("lamkang_word_features.json", n_clusters=4)
