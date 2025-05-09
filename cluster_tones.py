@@ -5,10 +5,23 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from sklearn.decomposition import PCA
 
-def normalize_zscore(arr):
-    mean = np.mean(arr)
-    std = np.std(arr)
-    return (arr - mean) / std if std > 0 else arr - mean
+def chao_scale(f0s):
+    """Map normalized F0s to Chao's 1–5 scale safely."""
+    f0s = np.array(f0s)
+    if np.any(f0s <= 0):
+        f0s = f0s + 1e-5  # prevent log2(0)
+    f0s_log = np.log2(f0s)
+    min_log, max_log = np.min(f0s_log), np.max(f0s_log)
+    if max_log - min_log == 0:
+        return np.array([3] * len(f0s))  # neutral tone level
+    scaled = 1 + 4 * (f0s_log - min_log) / (max_log - min_log)
+    return np.round(scaled).astype(int)
+
+def normalize_zscore(vectors):
+    vectors = np.array(vectors)
+    if np.std(vectors) == 0:
+        return np.zeros_like(vectors)
+    return (vectors - np.mean(vectors)) / np.std(vectors)
 
 def load_json(json_path):
     with open(json_path, "r") as f:
