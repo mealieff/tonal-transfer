@@ -17,24 +17,17 @@ def chao_scale(f0s):
     scaled = 1 + 4 * (f0s_log - min_log) / (max_log - min_log)
     return np.round(scaled).astype(int)
 
-def normalize_f0(vectors):
+
+def normalize_zscore(vectors):
     vectors = np.array(vectors)
-    valid = np.all(vectors != 0, axis=1)
-    valid_vectors = vectors[valid]
-    # debugging
-    if len(valid_vectors) == 0:
-        print("Warning: No valid F0 vectors to normalize.")
+    if len(vectors) == 0:
+        print("Warning: empty input to normalize_zscore.")
         return vectors
+    mean = np.mean(vectors, axis=0)
+    std = np.std(vectors, axis=0)
+    std[std == 0] = 1e-6  # Prevent division by zero
+    return (vectors - mean) / std
 
-    mean = np.mean(valid_vectors)
-    std = np.std(valid_vectors)
-
-    if std == 0:
-        print("Warning: Zero standard deviation in F0 normalization.")
-        return vectors
-
-    normalized = (vectors - mean) / std
-    return normalized
 
 def load_json(json_path):
     with open(json_path, "r") as f:
@@ -72,9 +65,6 @@ def plot_clusters(vectors, labels, title, filename):
 
 
 def plot_chao_tones(f0_vectors, labels, prefix="tone_clusters_chao"):
-    def chao_scale(f0_values):
-        return np.interp(np.log2(f0_values), [5.0, 9.0], [1, 5])
-    
     n_clusters = np.max(labels) + 1
     for cluster_id in range(n_clusters):
         cluster_vectors = f0_vectors[labels == cluster_id]
